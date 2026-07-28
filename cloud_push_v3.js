@@ -37,8 +37,18 @@ function parseRSSItem(xml) {
   const linkMatch = item.match(/<link>\s*([^<]+?)\s*<\/link>/);
   const dateMatch = item.match(/<pubDate>([^<]+)<\/pubDate>/);
 
-  // anyfeeder 的 link 用的是搜狗 url，wechat2rss 用的是 mp.weixin.qq.com 直链
-  const link = linkMatch ? linkMatch[1].trim() : "";
+  let link = linkMatch ? linkMatch[1].trim() : "";
+
+  // anyfeeder 的 link 是搜狗搜索链接，尝试从正文提取 mp.weixin.qq.com/s/ 直链
+  if (link.includes("weixin.sogou.com")) {
+    const directMatch = item.match(/https?:\/\/mp\.weixin\.qq\.com\/s\/[A-Za-z0-9_-]+/);
+    if (directMatch) {
+      link = directMatch[0];
+    } else {
+      // 没有直链，解码 Sogou URL 使其更干净
+      link = link.replace(/&amp;/g, "&");
+    }
+  }
 
   return {
     title: titleMatch ? titleMatch[1].trim() : "(无标题)",
