@@ -1,16 +1,13 @@
-name: WeRead Token 保活
-
+name: RSS 数据源健康检查
 on:
   schedule:
-    # 每 2 小时跑一次，及时检测 token 失效
+    # 每 2 小时检测
     - cron: '0 */2 * * *'
-  workflow_dispatch:
 
 jobs:
-  heartbeat:
+  check:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -20,9 +17,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Token 保活 + 失效通知
+      - name: 运行健康检查
         env:
-          WEREAD_TOKEN: ${{ secrets.WEREAD_TOKEN }}
-          WEREAD_VID: ${{ secrets.WEREAD_VID }}
           SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
-        run: node token_heartbeat.js
+        run: node source_healthcheck.js
