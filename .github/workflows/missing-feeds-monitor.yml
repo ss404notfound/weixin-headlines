@@ -1,0 +1,24 @@
+name: 缺号每日探测
+on:
+  schedule:
+    # 每天中午 12:00 + 晚上 20:00 UTC+8
+    - cron: '0 4,12 * * *'
+  workflow_dispatch:
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 探测缺号
+        env:
+          SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
+        run: node missing_feeds_monitor.js
