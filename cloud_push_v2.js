@@ -71,9 +71,8 @@ function loadCreds() {
 }
 
 // ===== WeRead API =====
-function fetchArticles(mp, creds, retries = 2) {
+function doFetch(url, creds) {
   return new Promise((resolve) => {
-    const url = `https://weread.111965.xyz/api/v2/platform/mps/${mp.id}/articles?page=1`;
     const req = https.get(url, {
       headers: { 'xid': creds.wereadVid, 'Authorization': `Bearer ${creds.wereadToken}` },
       timeout: 20000
@@ -82,26 +81,61 @@ function fetchArticles(mp, creds, retries = 2) {
       res.on('data', c => data += c);
       res.on('end', () => {
         try {
-          // 429 限流 → 重试
-          if (res.statusCode === 429 && retries > 0) {
-            setTimeout(() => fetchArticles(mp, creds, retries - 1).then(resolve), 3000);
-            return;
-          }
+          if (res.statusCode === 429) { resolve({ ok: false, error: '429' }); return; }
           const json = JSON.parse(data);
           if (json.statusCode === 401 || (json.message && json.message.includes('Token'))) {
-            resolve({ mp, ok: false, error: 'token_expired', raw: json });
+            resolve({ ok: false, error: 'token_expired', raw: json });
           } else {
             const articles = Array.isArray(json) ? json : (json.data || []);
-            resolve({ mp, ok: true, articles });
+            resolve({ ok: true, articles });
           }
         } catch (e) {
-          resolve({ mp, ok: false, error: 'parse: ' + data.substring(0, 80) });
+          resolve({ ok: false, error: 'parse: ' + data.substring(0, 80) });
         }
       });
     });
-    req.on('error', (e) => resolve({ mp, ok: false, error: e.message }));
-    req.on('timeout', () => { req.destroy(); resolve({ mp, ok: false, error: 'timeout' }); });
+    req.on('error', (e) => resolve({ ok: false, error: e.message }));
+    req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'timeout' }); });
   });
+}
+
+async function fetchArticles(mp, creds, retries = 2) {
+  const base = `https://weread.111965.xyz/api/v2/platform/mps/${mp.id}/articles`;
+
+  // 先试 ?page=1（大部分号用这个）
+  let result = await doFetch(base + '?page=1', creds);
+
+  // 429 限流 → 重试
+  while (result.error === '429' && retries > 0) {
+    await sleep(3000);
+    result = await doFetch(base + '?page=1', creds);
+    retries--;
+  }
+
+  // page=1 返回空但没报错 → 降级试无参（部分号如"人物"需要无参）
+  if (result.ok && result.articles.length === 0) {
+    await sleep(1000);
+    const noPage = await doFetch(base, creds);
+    if (noPage.ok && noPage.articles.length > 0) {
+      return { mp, ok: true, articles: noPage.articles };
+    }
+    // 两者都空 → 可能是 API 波动，稍等再试一次
+    if (retries > 0) {
+      await sleep(2000);
+      const retry = await doFetch(base + '?page=1', creds);
+      if (retry.ok && retry.articles.length > 0) {
+        return { mp, ok: true, articles: retry.articles };
+      }
+      if (retry.ok && retry.articles.length === 0) {
+        const retryNoPage = await doFetch(base, creds);
+        if (retryNoPage.ok && retryNoPage.articles.length > 0) {
+          return { mp, ok: true, articles: retryNoPage.articles };
+        }
+      }
+    }
+  }
+
+  return { mp, ...result };
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
