@@ -75,7 +75,7 @@ function doFetch(url, creds) {
   return new Promise((resolve) => {
     const req = https.get(url, {
       headers: { 'xid': creds.wereadVid, 'Authorization': `Bearer ${creds.wereadToken}` },
-      timeout: 20000
+      timeout: 10000
     }, (res) => {
       let data = '';
       res.on('data', c => data += c);
@@ -107,21 +107,21 @@ async function fetchArticles(mp, creds, retries = 2) {
 
   // 429 限流 → 重试
   while (result.error === '429' && retries > 0) {
-    await sleep(3000);
+    await sleep(1500);
     result = await doFetch(base + '?page=1', creds);
     retries--;
   }
 
   // page=1 返回空但没报错 → 降级试无参（部分号如"人物"需要无参）
   if (result.ok && result.articles.length === 0) {
-    await sleep(1000);
+    await sleep(500);
     const noPage = await doFetch(base, creds);
     if (noPage.ok && noPage.articles.length > 0) {
       return { mp, ok: true, articles: noPage.articles };
     }
     // 两者都空 → 可能是 API 波动，稍等再试一次
     if (retries > 0) {
-      await sleep(2000);
+      await sleep(1000);
       const retry = await doFetch(base + '?page=1', creds);
       if (retry.ok && retry.articles.length > 0) {
         return { mp, ok: true, articles: retry.articles };
@@ -153,22 +153,21 @@ async function fetchAllArticles(creds) {
       all.push(r);
       process.stdout.write(r.ok && r.articles.length > 0 ? '.' : '!');
     }
-    if (i + BATCH < MPS.length) await sleep(2000);
+    if (i + BATCH < MPS.length) await sleep(1000);
   }
 
   // 第2轮：捞漏——单独重试第1轮失败的号
   const failed = all.filter(r => r.ok && r.articles.length === 0);
   if (failed.length > 0) {
     console.log(`\n  第2轮捞漏 ${failed.length} 个失败的号...`);
-    await sleep(5000);  // 冷却 5s
+    await sleep(2000);
     for (let i = 0; i < failed.length; i++) {
       const mp = failed[i].mp;
       const retry = await fetchArticles(mp, creds);
-      // 替换原结果
       const idx = all.findIndex(r => r.mp.id === mp.id);
       if (idx >= 0) all[idx] = retry;
       process.stdout.write(retry.ok && retry.articles.length > 0 ? '.' : 'x');
-      await sleep(3000);  // 逐个请求，间隔 3s
+      await sleep(1500);
     }
   }
 
