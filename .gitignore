@@ -1,0 +1,9 @@
+github_secrets.txt
+wewe-rss/
+node_modules/
+.env
+*.png
+*.db
+scan_session.json
+login_qr*.png
+headlines_*.txt

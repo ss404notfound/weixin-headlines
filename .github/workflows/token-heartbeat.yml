@@ -1,0 +1,28 @@
+name: WeRead Token 保活
+
+on:
+  schedule:
+    # 每 6 小时跑一次 (UTC 0/6/12/18)
+    - cron: '0 0,6,12,18 * * *'
+  workflow_dispatch:
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Token 保活 + 失效通知
+        env:
+          WEREAD_TOKEN: ${{ secrets.WEREAD_TOKEN }}
+          WEREAD_VID: ${{ secrets.WEREAD_VID }}
+          SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
+        run: node token_heartbeat.js
