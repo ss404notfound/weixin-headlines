@@ -71,7 +71,7 @@ function loadCreds() {
 }
 
 // ===== WeRead API =====
-function fetchArticles(mp, creds) {
+function fetchArticles(mp, creds, retries = 2) {
   return new Promise((resolve) => {
     const url = `https://weread.111965.xyz/api/v2/platform/mps/${mp.id}/articles?page=1`;
     const req = https.get(url, {
@@ -82,8 +82,13 @@ function fetchArticles(mp, creds) {
       res.on('data', c => data += c);
       res.on('end', () => {
         try {
+          // 429 限流 → 重试
+          if (res.statusCode === 429 && retries > 0) {
+            setTimeout(() => fetchArticles(mp, creds, retries - 1).then(resolve), 3000);
+            return;
+          }
           const json = JSON.parse(data);
-          if (json.statusCode === 401 || json.message?.includes('Token')) {
+          if (json.statusCode === 401 || (json.message && json.message.includes('Token'))) {
             resolve({ mp, ok: false, error: 'token_expired', raw: json });
           } else {
             const articles = Array.isArray(json) ? json : (json.data || []);
@@ -99,24 +104,22 @@ function fetchArticles(mp, creds) {
   });
 }
 
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
 async function fetchAllArticles(creds) {
-  console.log(`[1/3] 并行抓取 ${MPS.length} 个公众号...`);
+  console.log(`[1/3] 逐批抓取 ${MPS.length} 个公众号...`);
   const t0 = Date.now();
-  const BATCH = 10;
+  const BATCH = 2;  // 降低并发，避免 429 限流
   const all = [];
 
   for (let i = 0; i < MPS.length; i += BATCH) {
     const batch = MPS.slice(i, i + BATCH);
-    const results = await Promise.allSettled(batch.map(mp => fetchArticles(mp, creds)));
+    const results = await Promise.all(batch.map(mp => fetchArticles(mp, creds)));
     for (const r of results) {
-      if (r.status === 'fulfilled') {
-        all.push(r.value);
-        process.stdout.write(r.value.ok && r.value.articles.length > 0 ? '.' : '!');
-      } else {
-        all.push({ ok: false, error: r.reason?.message });
-        process.stdout.write('!');
-      }
+      all.push(r);
+      process.stdout.write(r.ok && r.articles.length > 0 ? '.' : '!');
     }
+    if (i + BATCH < MPS.length) await sleep(2000);  // 批次间休息 2s
   }
 
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
