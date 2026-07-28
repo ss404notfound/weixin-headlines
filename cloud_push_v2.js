@@ -141,9 +141,9 @@ async function fetchArticles(mp, creds, retries = 2) {
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 async function fetchAllArticles(creds) {
-  console.log(`[1/3] 逐批抓取 ${MPS.length} 个公众号...`);
+  console.log(`[1/3] 第1轮抓取 ${MPS.length} 个公众号...`);
   const t0 = Date.now();
-  const BATCH = 2;  // 降低并发，避免 429 限流
+  const BATCH = 2;
   const all = [];
 
   for (let i = 0; i < MPS.length; i += BATCH) {
@@ -153,11 +153,28 @@ async function fetchAllArticles(creds) {
       all.push(r);
       process.stdout.write(r.ok && r.articles.length > 0 ? '.' : '!');
     }
-    if (i + BATCH < MPS.length) await sleep(2000);  // 批次间休息 2s
+    if (i + BATCH < MPS.length) await sleep(2000);
   }
 
+  // 第2轮：捞漏——单独重试第1轮失败的号
+  const failed = all.filter(r => r.ok && r.articles.length === 0);
+  if (failed.length > 0) {
+    console.log(`\n  第2轮捞漏 ${failed.length} 个失败的号...`);
+    await sleep(5000);  // 冷却 5s
+    for (let i = 0; i < failed.length; i++) {
+      const mp = failed[i].mp;
+      const retry = await fetchArticles(mp, creds);
+      // 替换原结果
+      const idx = all.findIndex(r => r.mp.id === mp.id);
+      if (idx >= 0) all[idx] = retry;
+      process.stdout.write(retry.ok && retry.articles.length > 0 ? '.' : 'x');
+      await sleep(3000);  // 逐个请求，间隔 3s
+    }
+  }
+
+  const ok = all.filter(r => r.ok && r.articles.length > 0).length;
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-  console.log(`\n  完成，耗时 ${elapsed}s`);
+  console.log(`\n  完成: ${ok}/${MPS.length}，耗时 ${elapsed}s`);
   return all;
 }
 
