@@ -1,9 +1,8 @@
 /**
- * WeRead Token 保活脚本
- * 每 6 小时调用一次 WeRead API，防止 token 因不活跃被失效
- * 如果 token 已失效，通过 Server酱 通知用户
- *
- * 用法：node token_heartbeat.js
+ * WeRead Token 心跳检测 v2
+ * - 每 2 小时检测 token 是否有效
+ * - 检测 3 个不同公众号（增加可靠性）
+ * - 失效时通过 Server酱 发送通知（含恢复指引）
  */
 
 const https = require('https');
@@ -12,12 +11,16 @@ const WEREAD_TOKEN = process.env.WEREAD_TOKEN;
 const WEREAD_VID = process.env.WEREAD_VID || '89668853';
 const SERVERCHAN_KEY = process.env.SERVERCHAN_KEY;
 
-// 用第一个公众号测试
-const TEST_MP = { id: 'MP_WXS_1432156401', name: '虎嗅APP' };
+// 用 3 个不同公众号测试，避免单点误判
+const TEST_MPS = [
+  { id: 'MP_WXS_1432156401', name: '虎嗅APP' },
+  { id: 'MP_WXS_2391309580', name: '人物' },
+  { id: 'MP_WXS_2395028760', name: '视觉志' },
+];
 
-function checkToken() {
+function checkOne(mp) {
   return new Promise((resolve) => {
-    const url = `https://weread.111965.xyz/api/v2/platform/mps/${TEST_MP.id}/articles?page=1`;
+    const url = `https://weread.111965.xyz/api/v2/platform/mps/${mp.id}/articles?page=1`;
     const req = https.get(url, {
       headers: { 'xid': WEREAD_VID, 'Authorization': `Bearer ${WEREAD_TOKEN}` },
       timeout: 15000
@@ -27,26 +30,31 @@ function checkToken() {
       res.on('end', () => {
         try {
           const json = JSON.parse(data);
-          if (json.statusCode === 401 || json.message?.includes('Token')) {
-            resolve({ ok: false, expired: true });
+          if (json.statusCode === 401 || (json.message && json.message.includes('Token'))) {
+            resolve({ ok: false, expired: true, mp: mp.name });
+          } else if (json.statusCode === 429 || (json.message && json.message.includes('WeReadError'))) {
+            // 限流不算过期
+            resolve({ ok: true, rateLimited: true, mp: mp.name });
+          } else if (Array.isArray(json) && json.length > 0) {
+            resolve({ ok: true, articles: json.length, mp: mp.name });
           } else {
-            resolve({ ok: true });
+            resolve({ ok: true, empty: true, mp: mp.name });
           }
         } catch (e) {
-          resolve({ ok: false, expired: false, error: e.message });
+          resolve({ ok: true, parseError: true, mp: mp.name });
         }
       });
     });
-    req.on('error', (e) => resolve({ ok: false, expired: false, error: e.message }));
-    req.on('timeout', () => { req.destroy(); resolve({ ok: false, expired: false, error: 'timeout' }); });
+    req.on('error', (e) => resolve({ ok: true, networkError: e.message, mp: mp.name }));
+    req.on('timeout', () => { req.destroy(); resolve({ ok: true, timeout: true, mp: mp.name }); });
   });
 }
 
 function notifyExpired() {
   return new Promise((resolve, reject) => {
     const body = new URLSearchParams({
-      title: '⚠️ WeRead Token 已失效，请扫码更新',
-      desp: '公众号头条推送的 WeRead token 已过期。\n\n**需要操作：**\n1. 打开 WorkBuddy\n2. 让助手重新扫码获取 token\n3. 更新 GitHub Secrets 中的 WEREAD_TOKEN\n\n在更新之前，头条推送将暂停。'
+      title: '⚠️ WeRead Token 已失效',
+      desp: '公众号头条推送的 WeRead token 已过期。\n\n**恢复步骤：**\n1. 在 WorkBuddy 中运行扫码流程\n2. 获取新 token 后自动更新\n\n在更新之前，每日推送将暂停。'
     }).toString();
 
     const req = https.request({
@@ -74,23 +82,31 @@ function notifyExpired() {
   console.log(`[heartbeat] ${new Date().toISOString()} 检查 token...`);
 
   if (!WEREAD_TOKEN) {
-    console.error('缺少 WEREAD_TOKEN');
+    console.error('[heartbeat] 缺少 WEREAD_TOKEN');
     process.exit(1);
   }
 
-  const result = await checkToken();
+  // 并行检查 3 个号
+  const results = await Promise.all(TEST_MPS.map(mp => checkOne(mp)));
 
-  if (result.ok) {
-    console.log('[heartbeat] ✅ Token 有效');
-  } else if (result.expired) {
+  for (const r of results) {
+    const status = r.expired ? '❌ 过期' : r.articles ? `✅ ${r.articles}篇` : r.rateLimited ? '⏳ 限流' : '⚠️ 异常';
+    console.log(`[heartbeat] ${r.mp}: ${status}`);
+  }
+
+  const expired = results.filter(r => r.expired);
+  const good = results.filter(r => r.articles && r.articles > 0);
+
+  if (expired.length >= 2) {
+    // 至少 2 个号确认过期才发通知（避免误报）
     console.log('[heartbeat] ❌ Token 已失效，发送通知...');
     if (SERVERCHAN_KEY) {
       await notifyExpired();
       console.log('[heartbeat] 通知已发送');
-    } else {
-      console.log('[heartbeat] 无 SERVERCHAN_KEY，跳过通知');
     }
+  } else if (good.length >= 2) {
+    console.log('[heartbeat] ✅ Token 有效');
   } else {
-    console.log(`[heartbeat] ⚠️ 检查失败: ${result.error}`);
+    console.log('[heartbeat] ⚠️ 状态不明（可能限流），持续监控');
   }
 })();
