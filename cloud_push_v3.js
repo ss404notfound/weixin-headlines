@@ -167,22 +167,37 @@ async function main() {
   const failCount = results.length - okCount;
   console.log(`\n📊 成功 ${okCount}/${results.length}，失败 ${failCount}`);
 
+  // ─── 新鲜度过滤：只展示 24 小时内的文章 ──────────────────
+  const NOW = Date.now();
+  const ONE_DAY = 24 * 60 * 60 * 1000;
+
   // 构建推送内容
   const dateHeader = todayStr();
   let body = `## 📰 公众号头条速览 | ${dateHeader}\n\n`;
 
+  let freshCount = 0;
   for (const r of results) {
-    if (r.ok) {
-      body += `### ${r.name}\n`;
-      body += `> ${r.title}\n`;
-      if (r.link) {
-        body += `🔗 [阅读原文](${r.link})\n`;
-      }
-      body += `📅 ${formatDate(r.pubDate)}\n\n`;
-    } else {
+    if (!r.ok) {
       body += `### ${r.name}\n`;
       body += `> ⚠️ 抓取失败：${r.error}\n\n`;
+      continue;
     }
+
+    // 检查是否在 24 小时内
+    const articleAge = NOW - new Date(r.pubDate).getTime();
+    if (articleAge > ONE_DAY || isNaN(articleAge)) {
+      body += `### ${r.name}\n`;
+      body += `> ⏸ 今日未更新（最后更新：${formatDate(r.pubDate)}）\n\n`;
+      continue;
+    }
+
+    freshCount++;
+    body += `### ${r.name}\n`;
+    body += `> ${r.title}\n`;
+    if (r.link) {
+      body += `🔗 [阅读原文](${r.link})\n`;
+    }
+    body += `📅 ${formatDate(r.pubDate)}\n\n`;
   }
 
   body += `---\n🤖 自动推送 | ${new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}`;
@@ -190,13 +205,13 @@ async function main() {
   if (dryRun) {
     console.log("\n📝 [DRY RUN] 推送内容预览:\n");
     console.log(body);
-    console.log("\n[DRY RUN 结束，未实际推送]");
+    console.log("\n[DRY RUN ���束，未实际推送]");
     return;
   }
 
   // 实际推送
-  console.log("\n📤 正在推送到 Server酱...");
-  const title = `${dateHeader} 公众号头条速览 (${okCount}/${results.length})`;
+  console.log(`\n📤 正在推送到 Server酱...（今日新鲜 ${freshCount}/${results.length}）`);
+  const title = `${dateHeader} 公众号头条速览 (${freshCount}/${results.length})`;
   const pushed = await pushViaServerChan(title, body);
   console.log(pushed ? "✅ 推送成功！" : "❌ 推送失败");
 }

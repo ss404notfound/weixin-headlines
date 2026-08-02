@@ -1,0 +1,25 @@
+name: anyfeeder 恢复监控
+
+on:
+  schedule:
+    # 每 3 小时 (UTC 1,4,7,10,13,16,19,22)
+    - cron: '0 1,4,7,10,13,16,19,22 * * *'
+  workflow_dispatch:
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 检测 anyfeeder 是否恢复
+        env:
+          SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
+        run: node anyfeeder_watch.js
